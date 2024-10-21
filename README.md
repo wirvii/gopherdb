@@ -1,2 +1,5 @@
-# gopherdb
-GopherDb es un motor de base de datos embebido y ligero escrito en Go, diseñado para replicar las características básicas de MongoDB para aplicaciones locales. Permite almacenar documentos en formato BSON, soporta índices para búsquedas eficientes y utiliza un lenguaje de consulta similar al de MongoDB.
+# GopherDb
+
+<img width="384" alt="image" src="https://github.com/user-attachments/assets/3f55c6ef-aec1-4700-a9ff-f1fc8d740a9c">
+
+GopherDb is a lightweight embedded database engine written in Go, designed to replicate the basic features of MongoDB for local applications. It allows you to store documents in BSON format, supports indexes for efficient searches, and uses a query language similar to MongoDB’s. Additionally, it automatically generates the _id field for each document, ensuring compatibility with MongoDB’s data format.
