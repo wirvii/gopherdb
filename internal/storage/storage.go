@@ -1,44 +1,22 @@
 package storage
 
-import (
-	"context"
-
-	. "github.com/wirvii/gopherdb/internal/consts"
-	"github.com/wirvii/gopherdb/internal/query"
-	"github.com/wirvii/gopherdb/v1/metadata"
-)
-
-// Storage is the interface that wraps the basic methods of a storage.
+// Storage is a generic interface for a key-value store.
 type Storage interface {
-	GetDatabase(dbName string) (*metadata.DatabaseInfo, error)
-	CreateDatabase(dbName string) error
-	DropDatabase(dbName string) error
-	ListDatabases(ctx context.Context) ([]*metadata.DatabaseInfo, error)
-
-	GetCollection(dbName, collectionName string) (*metadata.CollectionInfo, error)
-	CreateCollection(dbName, collectionName string) error
-	DropCollection(dbName, collectionName string) error
-	ListCollections(dbName string) ([]*metadata.CollectionInfo, error)
-
-	InsertDocument(dbName, collectionName, id string, document *metadata.DocumentInfo) error
-	GetDocument(dbName, collectionName, id string) ([]*metadata.DocumentInfo, error)
-	UpdateDocument(dbName, collectionName, id string, document []*metadata.DocumentInfo) error
-	DeleteDocument(dbName, collectionName, id string) error
-
-	FindDocuments(dbName, collectionName string, parsedQuery *query.ParsedQuery) ([]*metadata.DocumentInfo, error)
+	// Get returns the value for a given key.
+	Get(key string) ([]byte, error)
+	// Put sets the value for a given key.
+	Put(key string, value []byte) error
+	// Delete deletes the value for a given key.
+	Delete(key string) error
+	// Scan scans the database for all keys that match the prefix.
+	Scan(prefix string) (map[string][]byte, error)
+	// ScanKeys scans the database for all keys that match the prefix.
+	ScanKeys(prefix string) ([]string, error)
+	// Close closes the storage engine.
+	Close() error
 }
 
-// New creates a new storage with the provided options.
-func New(opts ...Option) (Storage, error) {
-	storageOpts := &storageOptions{
-		filePath:      "",
-		cacheSize:     OneHundredsMB,
-		encryptionKey: "",
-	}
-
-	for _, opt := range opts {
-		opt.apply(storageOpts)
-	}
-
-	return newBadgerStorage(storageOpts)
+// NewStorage creates a new storage engine.
+func NewStorage(path string) (Storage, error) {
+	return newBadgerEngine(path)
 }
