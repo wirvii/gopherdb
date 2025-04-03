@@ -5,6 +5,7 @@ import "github.com/wirvii/gopherdb/internal/storage"
 // Database es una base de datos.
 type Database struct {
 	name    string
+	colls   []*Collection
 	storage storage.Storage
 }
 
@@ -23,7 +24,14 @@ func NewDatabase(name, path string) (*Database, error) {
 
 // Collection devuelve una instancia de Collection para la base de datos
 func (db *Database) Collection(name string) (*Collection, error) {
-	return newCollection(db.storage, db.name, name)
+	col, err := newCollection(db.storage, db.name, name)
+	if err != nil {
+		return nil, err
+	}
+
+	db.colls = append(db.colls, col)
+
+	return col, nil
 }
 
 // Close cierra la base de datos

@@ -6,8 +6,8 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
-// getDecoder returns a new decoder for the given data and options.
-func getDecoder(
+// GetDecoder returns a new decoder for the given data and options.
+func GetDecoder(
 	data []byte,
 	opts *options.BSONOptions,
 ) (*bson.Decoder, error) {

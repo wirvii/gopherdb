@@ -1,36 +1,50 @@
 package gopherdb
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
+	"context"
 	"errors"
 	"fmt"
-	"slices"
 	"strings"
 	"sync"
 
+	"github.com/wirvii/gopherdb/internal/bson"
 	"github.com/wirvii/gopherdb/internal/consts"
 	"github.com/wirvii/gopherdb/internal/storage"
 )
 
+type indexTask struct {
+	doc map[string]any
+}
+
+type worker struct {
+	id     int
+	parent *IndexManager
+}
+
 // IndexManager is a manager for indexes.
 type IndexManager struct {
-	mu       sync.RWMutex
 	dbname   string
 	collname string
 	storage  storage.Storage
 	metadata CollectionMetadata
+	mu       sync.Mutex
 }
 
 // newIndexManager creates a new IndexManager.
 func newIndexManager(storage storage.Storage, dbname, collname string) *IndexManager {
 	return &IndexManager{
-		mu:       sync.RWMutex{},
+		mu:       sync.Mutex{},
 		storage:  storage,
 		dbname:   dbname,
 		collname: collname,
 	}
+}
+
+// List returns all the indexes for the collection.
+func (m *IndexManager) List() []IndexModel {
+	m.loadMetadata()
+
+	return m.metadata.Indexes
 }
 
 // buildMetadataKey builds the key for the collection metadata.
@@ -40,8 +54,8 @@ func (m *IndexManager) buildMetadataKey() string {
 
 // loadMetadata loads the collection metadata from the storage.
 func (m *IndexManager) loadMetadata() error {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
 	data, err := m.storage.Get(m.buildMetadataKey())
 	if err != nil {
@@ -75,7 +89,7 @@ func (m *IndexManager) loadMetadata() error {
 		return err
 	}
 
-	return json.Unmarshal(data, &m.metadata)
+	return bson.Unmarshal(data, &m.metadata)
 }
 
 // saveMetadata saves the collection metadata to the storage.
@@ -83,7 +97,7 @@ func (m *IndexManager) saveMetadata() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	data, err := json.Marshal(m.metadata)
+	data, err := bson.Marshal(m.metadata)
 	if err != nil {
 		return err
 	}
@@ -91,9 +105,31 @@ func (m *IndexManager) saveMetadata() error {
 	return m.storage.Put(m.buildMetadataKey(), data)
 }
 
-// getDocumentIdsByIndex gets the document ids for a given index.
-func (m *IndexManager) getDocumentIdsByIndex(index IndexModel, indexFilter map[string]any) ([]string, error) {
-	indexKeyPrefix, err := m.buildIndexKey(index, indexFilter, true)
+// getDocumentIdFromIndexKey gets the document id from an index key.
+func (m *IndexManager) getDocumentIdFromIndexKey(indexKey string) (string, error) {
+	match, err := consts.IndexKeyPathmatcher.Match(indexKey)
+	if err != nil {
+		return "", err
+	}
+
+	return match["docId"], nil
+}
+
+// getDocumentIndexKeysByIndex gets all the document ids for a given index.
+func (m *IndexManager) getDocumentIndexKeysByIndex(index IndexModel) ([]string, error) {
+	indexKeyPrefix := m.buildIndexFieldsKey(index)
+
+	entries, err := m.storage.ScanKeys(indexKeyPrefix)
+	if err != nil {
+		return nil, err
+	}
+
+	return entries, nil
+}
+
+// getDocumentIndexKeysByIndexAndFilter gets the document ids for a given index.
+func (m *IndexManager) getDocumentIndexKeysByIndexAndFilter(index IndexModel, indexFilter map[string]any) ([]string, error) {
+	indexKeyPrefix, err := m.buildDocumentIndexKey(index, indexFilter, true)
 	if err != nil {
 		return nil, err
 	}
@@ -108,42 +144,25 @@ func (m *IndexManager) getDocumentIdsByIndex(index IndexModel, indexFilter map[s
 		return nil, err
 	}
 
-	docIds := make([]string, 0, len(entries))
-
-	for _, entry := range entries {
-		match, err := consts.IndexKeyPathmatcher.Match(entry)
-		if err != nil {
-			return nil, err
-		}
-
-		docIds = append(docIds, match["docId"])
-	}
-
-	return docIds, nil
+	return entries, nil
 }
 
 // buildIndexFieldsKey builds the fields key for a given index.
 func (m *IndexManager) buildIndexFieldsKey(index IndexModel) string {
-	slices.SortFunc(index.Fields, func(a, b IndexField) int {
-		return (a.Order - b.Order)
-	})
-
 	fields := make([]string, 0, len(index.Fields))
 
 	for _, f := range index.Fields {
 		fields = append(fields, f.Name)
 	}
 
-	joinedFields := sha256.Sum256([]byte(strings.Join(fields, "|")))
-
-	fieldsKeyHash := hex.EncodeToString(joinedFields[:])
+	joinedFields := strings.Join(fields, "|")
 
 	key := fmt.Sprintf(
 		consts.IndexKeyStringFormat,
 		m.dbname,
 		m.collname,
 		index.Options.Name,
-		fieldsKeyHash,
+		joinedFields,
 		consts.RemoverWildcard,
 		consts.RemoverWildcard,
 	)
@@ -158,19 +177,15 @@ func (m *IndexManager) buildIndexFieldsKey(index IndexModel) string {
 	)
 }
 
-// buildIndexKey builds the index key for a document.
-func (m *IndexManager) buildIndexKey(index IndexModel, doc map[string]any, isPartial bool) (string, error) {
-	slices.SortFunc(index.Fields, func(a, b IndexField) int {
-		return (a.Order - b.Order)
-	})
-
+// buildDocumentIndexKey builds the index key for a document.
+func (m *IndexManager) buildDocumentIndexKey(index IndexModel, doc map[string]any, isPrefix bool) (string, error) {
 	values := make([]string, 0, len(index.Fields))
 	fields := make([]string, 0, len(index.Fields))
 
 	for _, f := range index.Fields {
 		val, ok := doc[f.Name]
 		if !ok {
-			if isPartial {
+			if isPrefix {
 				break
 			}
 
@@ -178,17 +193,14 @@ func (m *IndexManager) buildIndexKey(index IndexModel, doc map[string]any, isPar
 		}
 
 		fields = append(fields, f.Name)
-		values = append(values, fmt.Sprintf("%v", val))
+		values = append(values, encodeForLexOrder(val, f.Order < 0))
 	}
 
-	joinedFields := sha256.Sum256([]byte(strings.Join(fields, "|")))
-	joinedValues := sha256.Sum256([]byte(strings.Join(values, "|")))
-
-	fieldsKeyHash := hex.EncodeToString(joinedFields[:])
-	valuesKeyHash := hex.EncodeToString(joinedValues[:])
+	joinedFields := strings.Join(fields, "|")
+	joinedValues := strings.Join(values, "|")
 
 	docId := fmt.Sprintf("%v", doc[consts.DocumentFieldID])
-	if isPartial {
+	if isPrefix {
 		docId = consts.RemoverWildcard
 	}
 
@@ -197,8 +209,8 @@ func (m *IndexManager) buildIndexKey(index IndexModel, doc map[string]any, isPar
 		m.dbname,
 		m.collname,
 		index.Options.Name,
-		fieldsKeyHash,
-		valuesKeyHash,
+		joinedFields,
+		joinedValues,
 		docId,
 	), nil
 }
@@ -206,11 +218,11 @@ func (m *IndexManager) buildIndexKey(index IndexModel, doc map[string]any, isPar
 // checkUniqueness checks if the document violates the uniqueness constraint of the index.
 func (m *IndexManager) checkUniqueness(doc map[string]any) error {
 	for _, idx := range m.metadata.Indexes {
-		if !idx.Options.Unique {
+		if !idx.isUnique() {
 			continue
 		}
 
-		idxKey, err := m.buildIndexKey(idx, doc, false)
+		idxKey, err := m.buildDocumentIndexKey(idx, doc, false)
 		if err != nil {
 			return err
 		}
@@ -230,36 +242,31 @@ func (m *IndexManager) checkUniqueness(doc map[string]any) error {
 	return nil
 }
 
-// buildIndexName builds the index name.
-func (m *IndexManager) buildIndexName(idx IndexModel) string {
-	name := ""
-
-	for _, f := range idx.Fields {
-		name += fmt.Sprintf("_%s_%d", f.Name, f.Order)
-	}
-
-	return strings.TrimPrefix(name, "_")
-}
-
 // CreateMany creates many indexes.
-func (m *IndexManager) CreateMany(indexes []IndexModel) error {
+func (m *IndexManager) CreateMany(ctx context.Context, indexes []IndexModel) error {
 	if indexes == nil || len(indexes) == 0 {
 		return nil
 	}
 
 	m.loadMetadata()
-	defer m.buildIndexes()
+	defer m.buildIndexes(ctx)
+
+	indexes = splitCompoundIndexes(indexes)
 
 	for _, newidx := range indexes {
-		newidx.Options.Name = strings.TrimSpace(newidx.Options.Name)
-
-		if newidx.Options.Name == "" {
-			newidx.Options.Name = m.buildIndexName(newidx)
+		if err := newidx.validate(); err != nil {
+			return err
 		}
 
 		for _, idx := range m.metadata.Indexes {
 			if idx.Options.Name == newidx.Options.Name {
-				return fmt.Errorf("%w: index name %s", ErrIndexAlreadyExists, newidx.Options.Name)
+				if newidx.isAutogenerated() {
+					continue
+				}
+
+				if !idx.isAutogenerated() {
+					return fmt.Errorf("%w: index name %s", ErrIndexAlreadyExists, newidx.Options.Name)
+				}
 			}
 
 			found := 0
@@ -273,7 +280,19 @@ func (m *IndexManager) CreateMany(indexes []IndexModel) error {
 			}
 
 			if found == len(newidx.Fields) {
-				return fmt.Errorf("%w: index fields %v", ErrIndexAlreadyExists, newidx.Fields)
+				if newidx.isAutogenerated() {
+					continue
+				}
+
+				if !idx.isAutogenerated() {
+					return fmt.Errorf("%w: index fields %v", ErrIndexAlreadyExists, newidx.Fields)
+				}
+
+				idx.Options = newidx.Options
+				idx.Options.Autogenerated = false
+				idx.Fields = newidx.Fields
+
+				continue
 			}
 		}
 
@@ -283,15 +302,15 @@ func (m *IndexManager) CreateMany(indexes []IndexModel) error {
 	return m.saveMetadata()
 }
 
-// insertIndexes inserts the indexes for a document.
-func (m *IndexManager) insertIndexes(doc map[string]any) error {
+// indexDocument indexes a document.
+func (m *IndexManager) indexDocument(txn storage.Transaction, doc map[string]any) error {
 	for _, idx := range m.metadata.Indexes {
-		idxKey, err := m.buildIndexKey(idx, doc, false)
+		idxKey, err := m.buildDocumentIndexKey(idx, doc, false)
 		if err != nil {
 			return err
 		}
 
-		if err := m.storage.Put(idxKey, nil); err != nil {
+		if err := txn.Put(idxKey, nil); err != nil {
 			return err
 		}
 	}
@@ -299,10 +318,10 @@ func (m *IndexManager) insertIndexes(doc map[string]any) error {
 	return nil
 }
 
-// deleteIndexes deletes the indexes for a document.
-func (m *IndexManager) deleteIndexes(doc map[string]any) error {
+// deleteDocumentIndexes deletes the indexes for a document.
+func (m *IndexManager) deleteDocumentIndexes(doc map[string]any) error {
 	for _, idx := range m.metadata.Indexes {
-		idxKey, err := m.buildIndexKey(idx, doc, false)
+		idxKey, err := m.buildDocumentIndexKey(idx, doc, false)
 		if err != nil {
 			return err
 		}
@@ -313,21 +332,6 @@ func (m *IndexManager) deleteIndexes(doc map[string]any) error {
 	}
 
 	return nil
-}
-
-// buildCollectionKey builds the collection key.
-func (m *IndexManager) buildCollectionKey() string {
-	return fmt.Sprintf(consts.CollectionKeyStringFormat, m.dbname, m.collname)
-}
-
-// buildCollectionsKey builds the collections key.
-func (m *IndexManager) buildCollectionsKey() string {
-	key := fmt.Sprintf(consts.CollectionKeyStringFormat, m.dbname, consts.RemoverWildcard)
-
-	return strings.TrimSuffix(
-		key,
-		consts.RemoverWildcard,
-	)
 }
 
 // buildDocumentKey builds the document key.
@@ -346,7 +350,7 @@ func (m *IndexManager) buildDocumentsKey() string {
 }
 
 // buildIndexes builds the indexes for a collection.
-func (m *IndexManager) buildIndexes() {
+func (m *IndexManager) buildIndexes(ctx context.Context) {
 	go func() {
 		m.loadMetadata()
 
@@ -360,15 +364,28 @@ func (m *IndexManager) buildIndexes() {
 			return
 		}
 
-		for _, doc := range docs {
-			var docMap map[string]any
-			if err := json.Unmarshal(doc, &docMap); err != nil {
-				return
-			}
+		txn := m.storage.BeginTx()
 
-			if err := m.insertIndexes(docMap); err != nil {
+		for _, doc := range docs {
+			select {
+			case <-ctx.Done():
+				txn.Rollback()
+
 				return
+			default:
+				var docMap map[string]any
+				if err := bson.Unmarshal(doc.Value, &docMap); err != nil {
+					return
+				}
+
+				if err := m.indexDocument(txn, docMap); err != nil {
+					return
+				}
 			}
+		}
+
+		if err := txn.Commit(); err != nil {
+			return
 		}
 	}()
 }

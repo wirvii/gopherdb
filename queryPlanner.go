@@ -1,11 +1,15 @@
 package gopherdb
 
-import "github.com/wirvii/gopherdb/internal/queryengine"
+import (
+	"github.com/wirvii/gopherdb/internal/queryengine"
+	"github.com/wirvii/gopherdb/options"
+)
 
 // QueryPlan is the plan for a query.
 type QueryPlan struct {
 	IndexUsed   *IndexModel
 	IndexFilter map[string]any
+	UsedForSort bool
 	IsExact     bool
 }
 
@@ -22,35 +26,75 @@ func NewQueryPlanner(indexes []IndexModel) *QueryPlanner {
 }
 
 // Plan plans a query.
-func (qp *QueryPlanner) Plan(filter map[string]any) *QueryPlan {
+func (qp *QueryPlanner) Plan(
+	filter map[string]any,
+	sort []options.SortField,
+) *QueryPlan {
 	flatFilter := qp.flattenFilter(filter)
 
-	indexUsed := new(IndexModel)
-	indexFilter := make(map[string]any)
+	var best *IndexModel
 
+	var bestFilter map[string]any
+
+	maxFilterMatch := 0
+	bestUsedForSort := false
+
+checkIndex:
 	for _, index := range qp.indexes {
-		indexFilterLocal := make(map[string]any)
+		localFilter := map[string]any{}
+		matchCount := 0
 
-		for _, field := range index.Fields {
-			if v, ok := flatFilter[field.Name]; ok {
-				if eq, ok := v.(map[string]any); ok {
-					if val, ok := eq[queryengine.OperatorEqual.String()]; ok {
-						indexFilterLocal[field.Name] = val
-					}
-				}
+		// Evaluamos coincidencias en el filtro
+		for i, field := range index.Fields {
+			val, ok := flatFilter[field.Name]
+			if !ok {
+				break
+			}
+
+			opMap, ok := val.(map[string]any)
+			if !ok {
+				break
+			}
+
+			if eqVal, ok := opMap[queryengine.OperatorEqual.String()]; ok {
+				localFilter[field.Name] = eqVal
+				matchCount++
+			} else if neVal, ok := opMap[queryengine.OperatorNotEqual.String()]; ok {
+				localFilter[field.Name] = map[string]any{queryengine.OperatorNotEqual.String(): neVal}
+				matchCount++
+			} else {
+				break
+			}
+
+			if matchCount != i+1 {
+				break
 			}
 		}
 
-		if len(indexFilterLocal) > len(indexFilter) {
-			indexUsed = &index
-			indexFilter = indexFilterLocal
+		// Si no hay filtro, evaluamos si el índice calza con el orden
+		if matchCount == 0 && len(sort) > 0 {
+			if qp.indexSupportsSort(index, sort) {
+				best = &index
+				bestFilter = map[string]any{}
+				bestUsedForSort = true
+
+				break checkIndex
+			}
+		}
+
+		if matchCount > maxFilterMatch {
+			best = &index
+			bestFilter = localFilter
+			maxFilterMatch = matchCount
+			bestUsedForSort = qp.indexSupportsSort(index, sort)
 		}
 	}
 
 	return &QueryPlan{
-		IndexUsed:   indexUsed,
-		IndexFilter: indexFilter,
-		IsExact:     (indexUsed != nil && len(indexFilter) == len(indexUsed.Fields)),
+		IndexUsed:   best,
+		IndexFilter: bestFilter,
+		UsedForSort: bestUsedForSort,
+		IsExact:     best != nil && len(bestFilter) == len(best.Fields),
 	}
 }
 
@@ -68,4 +112,22 @@ func (qp *QueryPlanner) flattenFilter(filter map[string]any) map[string]any {
 	}
 
 	return out
+}
+
+func (qp *QueryPlanner) indexSupportsSort(index IndexModel, sort []options.SortField) bool {
+	if len(sort) > len(index.Fields) {
+		return false
+	}
+
+	for i, sf := range sort {
+		if index.Fields[i].Name != sf.Field {
+			return false
+		}
+
+		if index.Fields[i].Order != sf.Order {
+			return false
+		}
+	}
+
+	return true
 }

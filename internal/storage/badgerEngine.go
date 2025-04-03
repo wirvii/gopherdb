@@ -1,10 +1,13 @@
 package storage
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"os"
 
 	"github.com/dgraph-io/badger/v4"
+	"github.com/dgraph-io/ristretto/v2/z"
 	. "github.com/wirvii/gopherdb/internal/consts"
 )
 
@@ -27,14 +30,57 @@ func newBadgerEngine(path string) (*badgerEngine, error) {
 		return nil, err
 	}
 
+	if db.IsClosed() {
+		return nil, ErrDatabaseClosed
+	}
+
 	return &badgerEngine{db: db}, nil
+}
+
+// BeginTx starts a new transaction.
+func (e *badgerEngine) BeginTx() Transaction {
+	return newBadgerTransaction(e.db.NewTransaction(true))
 }
 
 // Put inserts a key-value pair into the storage engine.
 func (e *badgerEngine) Put(key string, value []byte) error {
+	if value == nil {
+		value = []byte{}
+	}
+
 	return e.db.Update(func(txn *badger.Txn) error {
 		return txn.Set([]byte(key), value)
 	})
+}
+
+// Stream streams the database for all keys that match the prefix.
+func (e *badgerEngine) Stream(ctx context.Context, prefix string, yield func(key string, value []byte) error) error {
+	stream := e.db.NewStream()
+	stream.Prefix = []byte(prefix)
+	stream.Send = func(buf *z.Buffer) error {
+		if !buf.IsEmpty() {
+			kvList, err := badger.BufferToKVList(buf)
+			if err != nil {
+				return err
+			}
+
+			for _, kv := range kvList.Kv {
+				if err := yield(string(kv.Key), kv.Value); err != nil {
+					return err
+				}
+			}
+
+			return nil
+		}
+
+		return nil
+	}
+
+	if err := stream.Orchestrate(ctx); err != nil {
+		return fmt.Errorf("stream execution failed: %w", err)
+	}
+
+	return nil
 }
 
 // Get retrieves a value from the storage engine for the given key.
@@ -58,6 +104,7 @@ func (e *badgerEngine) Get(key string) ([]byte, error) {
 
 		return nil
 	})
+
 	if err != nil {
 		return nil, err
 	}
@@ -73,18 +120,22 @@ func (e *badgerEngine) Delete(key string) error {
 }
 
 // Scan scans the storage engine for all keys that match the given prefix.
-func (e *badgerEngine) Scan(prefix string) (map[string][]byte, error) {
-	results := make(map[string][]byte)
+func (e *badgerEngine) Scan(prefix string) ([]KV, error) {
+	results := make([]KV, 0)
+
+	opts := badger.DefaultIteratorOptions
 
 	err := e.db.View(func(txn *badger.Txn) error {
-		it := txn.NewIterator(badger.DefaultIteratorOptions)
+		it := txn.NewIterator(opts)
 		defer it.Close()
 
 		for it.Seek([]byte(prefix)); it.ValidForPrefix([]byte(prefix)); it.Next() {
 			item := it.Item()
 			k := item.Key()
 			err := item.Value(func(v []byte) error {
-				results[string(k)] = v
+				copied := make([]byte, len(v))
+				copy(copied, v)
+				results = append(results, KV{Key: string(k), Value: copied})
 
 				return nil
 			})
@@ -96,6 +147,7 @@ func (e *badgerEngine) Scan(prefix string) (map[string][]byte, error) {
 
 		return nil
 	})
+
 	if err != nil {
 		return nil, err
 	}
@@ -103,14 +155,35 @@ func (e *badgerEngine) Scan(prefix string) (map[string][]byte, error) {
 	return results, nil
 }
 
+// PrintAllKeys prints all keys in the storage engine.
+func (e *badgerEngine) PrintAllKeys() error {
+	opts := badger.DefaultIteratorOptions
+	opts.PrefetchValues = false
+
+	err := e.db.View(func(txn *badger.Txn) error {
+		it := txn.NewIterator(opts)
+		defer it.Close()
+
+		for it.Rewind(); it.Valid(); it.Next() {
+			item := it.Item()
+			k := item.Key()
+			fmt.Println("Key:", string(k))
+		}
+
+		return nil
+	})
+
+	return err
+}
+
 // ScanKeys scans the storage engine for all keys that match the given prefix.
 func (e *badgerEngine) ScanKeys(prefix string) ([]string, error) {
 	results := make([]string, 0)
 
-	err := e.db.View(func(txn *badger.Txn) error {
-		opts := badger.DefaultIteratorOptions
-		opts.PrefetchValues = false
+	opts := badger.DefaultIteratorOptions
+	opts.PrefetchValues = false
 
+	err := e.db.View(func(txn *badger.Txn) error {
 		it := txn.NewIterator(opts)
 		defer it.Close()
 
@@ -122,6 +195,7 @@ func (e *badgerEngine) ScanKeys(prefix string) ([]string, error) {
 
 		return nil
 	})
+
 	if err != nil {
 		return nil, err
 	}
