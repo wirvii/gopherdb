@@ -22,11 +22,11 @@ func main() {
 
 	log.Println("Initializing benchmark...")
 
-	runCreateIndexes(ctx, coll)
 	//runInsert(ctx, coll)
 	//runFindAll(coll)
 	//runFindWithFilterWithSimpleIndex(coll)
 	//runFindWithFilterWithCompoundIndex(coll)
 	//runUpdate(coll)
 	//runDelete(coll)
+	runCreateIndexes(ctx, coll)
 }

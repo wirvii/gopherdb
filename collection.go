@@ -167,9 +167,8 @@ func (c *Collection) updateOne(
 
 	docMapID, docMapIDOk := docMap[consts.DocumentFieldID]
 	if !docMapIDOk {
-		return UpdateOneResult{
-			Err: ErrDocumentIDNotFound,
-		}
+		docMap[consts.DocumentFieldID] = docID
+		docMapID = docID
 	}
 
 	if docID != docMapID {

@@ -20,3 +20,10 @@ func (o *DeleteOptions) Merge(opts ...*DeleteOptions) *DeleteOptions {
 
 	return o
 }
+
+// SetLimit establece el valor de la opción Limit.
+func (o *DeleteOptions) SetLimit(limit int) *DeleteOptions {
+	o.Limit = &limit
+
+	return o
+}

@@ -30,3 +30,17 @@ func (o *UpdateOptions) Merge(opts ...*UpdateOptions) *UpdateOptions {
 
 	return o
 }
+
+// SetUpsert establece el valor de la opción Upsert.
+func (o *UpdateOptions) SetUpsert(upsert bool) *UpdateOptions {
+	o.Upsert = &upsert
+
+	return o
+}
+
+// SetSet establece el valor de la opción Set.
+func (o *UpdateOptions) SetSet(set bool) *UpdateOptions {
+	o.Set = &set
+
+	return o
+}
