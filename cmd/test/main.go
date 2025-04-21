@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log"
 
 	"github.com/wirvii/gopherdb"
@@ -12,7 +13,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	//ctx := context.Background()
+	ctx := context.Background()
 	coll, err := db.Collection("people")
 
 	if err != nil {
@@ -21,7 +22,11 @@ func main() {
 
 	log.Println("Initializing benchmark...")
 
-	//runCreateIndexes(ctx, coll)
+	runCreateIndexes(ctx, coll)
 	//runInsert(ctx, coll)
-	runFindAll(coll)
+	//runFindAll(coll)
+	//runFindWithFilterWithSimpleIndex(coll)
+	//runFindWithFilterWithCompoundIndex(coll)
+	//runUpdate(coll)
+	//runDelete(coll)
 }

@@ -183,17 +183,18 @@ func (m *IndexManager) buildDocumentIndexKey(index IndexModel, doc map[string]an
 	fields := make([]string, 0, len(index.Fields))
 
 	for _, f := range index.Fields {
+		fields = append(fields, f.Name)
+
 		val, ok := doc[f.Name]
-		if !ok {
+		if ok {
+			values = append(values, encodeForLexOrder(val, f.Order < 0))
+		} else {
 			if isPrefix {
-				break
+				continue
 			}
 
 			return "", ErrMissingFieldForIndex
 		}
-
-		fields = append(fields, f.Name)
-		values = append(values, encodeForLexOrder(val, f.Order < 0))
 	}
 
 	joinedFields := strings.Join(fields, "|")

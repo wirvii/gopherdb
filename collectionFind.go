@@ -3,7 +3,6 @@ package gopherdb
 import (
 	"fmt"
 
-	"github.com/wirvii/gopherdb/internal/bson"
 	"github.com/wirvii/gopherdb/internal/queryengine"
 	"github.com/wirvii/gopherdb/internal/storage"
 	"github.com/wirvii/gopherdb/options"
@@ -47,10 +46,13 @@ func (c *Collection) FindOne(
 		}
 	}
 
-	return FindOneResult{
-		raw:       result.raw[0],
-		IndexUsed: result.IndexUsed,
+	resultFind := FindOneResult{}
+
+	if len(result.raw) > 0 {
+		resultFind.raw = result.raw[0]
 	}
+
+	return resultFind
 }
 
 // Find finds documents by a filter.
@@ -75,7 +77,7 @@ func (c *Collection) Find(
 		}
 	}
 
-	rawDocs := make([]map[string]any, 0)
+	raw := make([]storage.KV, 0)
 	totalCount := int64(0)
 
 	if plan.IndexUsed != nil {
@@ -134,7 +136,7 @@ func (c *Collection) Find(
 			}
 
 			if expr.Evaluate(result.Document()) {
-				rawDocs = append(rawDocs, result.Document())
+				raw = append(raw, result.raw)
 				totalCount++
 			}
 		}
@@ -149,41 +151,34 @@ func (c *Collection) Find(
 		}
 
 		for _, kv := range docs {
-			var doc map[string]any
-			if err := bson.Unmarshal(kv.Value, &doc); err != nil {
-				return FindResult{
-					Err: fmt.Errorf("json unmarshal failed: %w", err),
-				}
-			}
-
-			if expr.Evaluate(doc) {
-				rawDocs = append(rawDocs, doc)
+			if expr.Evaluate(kv.Document()) {
+				raw = append(raw, kv)
 				totalCount++
 			}
 		}
 	}
 
 	result := FindResult{
-		documents:  rawDocs,
+		raw:        raw,
 		IndexUsed:  plan.IndexUsed,
 		TotalCount: totalCount,
 	}
 
 	if opt.Sort != nil && !plan.UsedForSort {
-		c.sortDocuments(result.Documents(), opt)
+		c.sortDocuments(result.raw, opt)
 	}
 
 	if opt.Skip != nil {
-		if int(*opt.Skip) < len(result.Documents()) {
-			result.documents = result.Documents()[*opt.Skip:]
+		if int(*opt.Skip) < len(result.raw) {
+			result.raw = result.raw[*opt.Skip:]
 		} else {
-			result.documents = nil
+			result.raw = nil
 		}
 	}
 
 	if opt.Limit != nil {
-		if int(*opt.Limit) < len(result.Documents()) {
-			result.documents = result.Documents()[:*opt.Limit]
+		if int(*opt.Limit) < len(result.raw) {
+			result.raw = result.raw[:*opt.Limit]
 		}
 	}
 

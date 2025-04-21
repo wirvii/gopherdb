@@ -165,6 +165,19 @@ func (c *Collection) updateOne(
 		}
 	}
 
+	docMapID, docMapIDOk := docMap[consts.DocumentFieldID]
+	if !docMapIDOk {
+		return UpdateOneResult{
+			Err: ErrDocumentIDNotFound,
+		}
+	}
+
+	if docID != docMapID {
+		return UpdateOneResult{
+			Err: ErrDocumentIDNoEditable,
+		}
+	}
+
 	docUpdate := make(map[string]any)
 	if opt.Set != nil && *opt.Set {
 		maps.Copy(docUpdate, docMap)
@@ -308,11 +321,11 @@ func (c *Collection) deleteOne(txn storage.Transaction, filter map[string]any) D
 }
 
 // sortDocuments sorts the documents by the given sort options.
-func (c *Collection) sortDocuments(docs []map[string]any, opt *options.FindOptions) {
-	slices.SortStableFunc(docs, func(a, b map[string]any) int {
+func (c *Collection) sortDocuments(docs []storage.KV, opt *options.FindOptions) {
+	slices.SortStableFunc(docs, func(a, b storage.KV) int {
 		for _, f := range opt.Sort {
-			va, aok := a[f.Field]
-			vb, bok := b[f.Field]
+			va, aok := a.Document()[f.Field]
+			vb, bok := b.Document()[f.Field]
 
 			if va == nil || vb == nil || !aok || !bok {
 				continue
