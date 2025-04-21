@@ -22,7 +22,8 @@ func newBadgerEngine(path string) (*badgerEngine, error) {
 		return nil, err
 	}
 
-	opts := badger.DefaultOptions(path)
+	opts := badger.DefaultOptions(path).
+		WithValueLogFileSize(128 << 20)
 	opts.Logger = nil
 
 	db, err := badger.Open(opts)
