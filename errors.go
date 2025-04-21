@@ -39,4 +39,8 @@ var (
 	ErrDocumentPointerIsNil = errors.New("document pointer is nil")
 	// ErrDocumentTypeInvalid is returned when a document type is invalid.
 	ErrDocumentTypeInvalid = errors.New("document type is invalid")
+	// ErrDocumentIDNotFound is returned when a document ID is not found.
+	ErrDocumentIDNotFound = errors.New("document ID not found")
+	// ErrDocumentIDNoEditable is returned when a document ID is not editable.
+	ErrDocumentIDNoEditable = errors.New("document ID no editable")
 )

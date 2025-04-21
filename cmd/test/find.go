@@ -35,7 +35,91 @@ func runFindAll(coll *gopherdb.Collection) {
 
 	start = time.Now()
 	err := results.Unmarshal(&people)
-	benchmarkResult.TotalCount = int64(len(results.Documents()))
+	benchmarkResult.TotalCount = results.TotalCount
+
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	benchmarkResult.UnmarshalTime = time.Since(start)
+
+	printFindAllResult(benchmarkResult)
+}
+
+// runFindWithFilterWithSimpleIndex runs the find with filter with simple index benchmark.
+func runFindWithFilterWithSimpleIndex(coll *gopherdb.Collection) {
+	log.Println()
+	log.Println("Running find with filter with simple index...")
+
+	benchmarkResult := FindResultBenchmark{
+		Title: "Find with filter with simple index",
+	}
+
+	filter := map[string]any{
+		"age": 30,
+	}
+
+	start := time.Now()
+	results := coll.Find(filter)
+
+	if results.Err != nil {
+		log.Fatal(results.Err)
+	}
+
+	benchmarkResult.QueryTime = time.Since(start)
+
+	if results.IndexUsed != nil {
+		benchmarkResult.IndexUsed = results.IndexUsed.Options.Name
+	}
+
+	people := make([]Person, 0)
+
+	start = time.Now()
+	err := results.Unmarshal(&people)
+	benchmarkResult.TotalCount = results.TotalCount
+
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	benchmarkResult.UnmarshalTime = time.Since(start)
+
+	printFindAllResult(benchmarkResult)
+}
+
+// runFindWithFilterWithCompoundIndex runs the find with filter with compound index benchmark.
+func runFindWithFilterWithCompoundIndex(coll *gopherdb.Collection) {
+	log.Println()
+	log.Println("Running find with filter with compound index...")
+
+	benchmarkResult := FindResultBenchmark{
+		Title: "Find with filter with compound index",
+	}
+
+	filter := map[string]any{
+		"name":      "Patricia",
+		"last_name": "Beahan",
+		"age":       map[string]any{"$gte": 40},
+	}
+
+	start := time.Now()
+	results := coll.Find(filter)
+
+	if results.Err != nil {
+		log.Fatal(results.Err)
+	}
+
+	benchmarkResult.QueryTime = time.Since(start)
+
+	if results.IndexUsed != nil {
+		benchmarkResult.IndexUsed = results.IndexUsed.Options.Name
+	}
+
+	people := make([]Person, 0)
+
+	start = time.Now()
+	err := results.Unmarshal(&people)
+	benchmarkResult.TotalCount = results.TotalCount
 
 	if err != nil {
 		log.Fatal(err)

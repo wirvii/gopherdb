@@ -2,7 +2,6 @@ package queryengine
 
 import (
 	"fmt"
-	"reflect"
 )
 
 // Expr is a query expression.
@@ -58,9 +57,9 @@ func (c ComparisonExpr) Evaluate(doc map[string]any) bool {
 
 	switch c.Operator {
 	case OperatorEqual:
-		return reflect.DeepEqual(val, c.Value)
+		return compare(val, c.Value) == 0
 	case OperatorNotEqual:
-		return !reflect.DeepEqual(val, c.Value)
+		return compare(val, c.Value) != 0
 	case OperatorGreaterThan:
 		return compare(val, c.Value) > 0
 	case OperatorLessThan:
@@ -80,7 +79,7 @@ func (c ComparisonExpr) Evaluate(doc map[string]any) bool {
 		}
 
 		for _, item := range list {
-			if reflect.DeepEqual(val, item) {
+			if compare(val, item) == 0 {
 				return true
 			}
 		}

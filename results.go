@@ -23,7 +23,6 @@ type InsertManyResult struct {
 // FindOneResult es el resultado de una consulta de un documento.
 type FindOneResult struct {
 	raw       storage.KV
-	document  map[string]any
 	IndexUsed *IndexModel
 	Err       error
 }
@@ -34,12 +33,7 @@ func (r *FindOneResult) Document() map[string]any {
 		return nil
 	}
 
-	if r.document == nil {
-		r.document = make(map[string]any)
-		bson.Unmarshal(r.raw.Value, &r.document)
-	}
-
-	return r.document
+	return r.raw.Document()
 }
 
 // Unmarshal unmarshals the result into a struct.
@@ -48,35 +42,15 @@ func (r *FindOneResult) Unmarshal(result any) error {
 		return r.Err
 	}
 
-	return bson.ConvertToStruct(r.Document(), result)
+	return bson.Unmarshal(r.raw.Value, result)
 }
 
 // FindResult es el resultado de una consulta.
 type FindResult struct {
 	raw        []storage.KV
-	documents  []map[string]any
 	TotalCount int64
 	IndexUsed  *IndexModel
 	Err        error
-}
-
-// Documents returns the documents of the find result.
-func (r *FindResult) Documents() []map[string]any {
-	if r.Err != nil {
-		return nil
-	}
-
-	if r.documents == nil {
-		r.documents = make([]map[string]any, len(r.raw))
-
-		for i, raw := range r.raw {
-			bson.Unmarshal(raw.Value, &r.documents[i])
-		}
-	}
-
-	r.raw = nil
-
-	return r.documents
 }
 
 // Unmarshal unmarshals the results into a slice of the given type.
@@ -102,9 +76,7 @@ func (r *FindResult) Unmarshal(results any) error {
 	elemType := sliceVal.Type().Elem()
 	index := 0
 
-	documents := r.Documents()
-
-	for _, res := range documents {
+	for _, kv := range r.raw {
 		if sliceVal.Len() == index {
 			// slice is full
 			newElem := reflect.New(elemType)
@@ -114,7 +86,7 @@ func (r *FindResult) Unmarshal(results any) error {
 
 		currElem := sliceVal.Index(index).Addr().Interface()
 
-		err := bson.ConvertToStruct(res, currElem)
+		err := bson.Unmarshal(kv.Value, currElem)
 
 		if err != nil {
 			return fmt.Errorf("error unmarshalling result: %w", err)
